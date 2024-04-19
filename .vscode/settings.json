@@ -1,0 +1,15 @@
+{
+    "files.associations": {
+        "gcc8_c_support.h": "c",
+        "blit.h": "c",
+        "gfx.h": "c"
+    },
+    "m68k.includePaths": [
+        "c:\\Users\\specc\\.vscode\\extensions\\bartmanabyss.amiga-debug-1.7.7\\bin\\win32\\opt\\m68k-amiga-elf\\sys-include"
+    ],
+    "m68k.vasm.provideDiagnostics": false,
+    "m68k.vasm.binPath": "C:\\msys64\\home\\specc\\amiga\\vasm\\vasmm68k_mot.exe",
+    "[m68k]": {
+        "editor.rulers": [],
+    },
+}
