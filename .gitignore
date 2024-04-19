@@ -1,7 +1,2 @@
-obj/main.o
-out/a.elf
-out/a.exe
-out/a.map
-out/a.s
-out/a.s
-obj/main.d
+obj/*
+out/*
