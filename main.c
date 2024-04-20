@@ -184,21 +184,23 @@ static inline void BlitClear(const APTR dest, const WORD height, const WORD widt
 	WaitBlitInline();
 
 	__asm volatile(
-		"move.l	%1, 0x40(%0)\n" // bltcon0 = DEST; bltcon1 = 0
-		"move.l	%2, 0x54(%0)\n" // bltdpt  = dest
-		"move.w %3, 0x66(%0)\n" // bltdmod = WIDTH / 8 - width * 2
-		"move.w	%4, 0x58(%0)"	// bltsize = (height << 6) + width
+		"move.l    %1, %5\n" // bltcon0 = DEST; bltcon1 = 0
+		"move.l    %2, %6\n" // bltdpt  = dest
+		"move.w    %3, %7\n" // bltdmod = WIDTH / 8 - width * 2
+		"move.w    %4, %8"	 // bltsize = (height << 6) + width
 		:
-		: "a"(custom), "g"(DEST << 16), "g"(dest), "g"(WIDTH / 8 - width * 2), "g"((height << 6) + width)
+		: "a"(custom), "g"(DEST << 16), "g"(dest), "g"(WIDTH / 8 - width * 2), "g"((height << 6) + width),
+		  "U"(custom->bltcon0), "U"(custom->bltdpt), "U"(custom->bltdmod), "U"(custom->bltsize)
 		: "cc");
 }
 
 __attribute__((always_inline)) static inline void SetPixel(const UBYTE *screen, const WORD x, const WORD y)
 {
-	__asm volatile("bset %[pixel], %[ptr]\n"
-				   :
-				   : [pixel] "d"((BYTE)~x), [ptr] "m"(*(screen + yOffset[y] + (x / 8)))
-				   : "cc");
+	__asm volatile(
+		"bset %0, %1\n"
+		:
+		: "d"((BYTE)~x), "m"(*(screen + yOffset[y] + (x / 8)))
+		: "cc");
 }
 
 __attribute__((always_inline)) static inline void Swap(WORD *a, WORD *b)
