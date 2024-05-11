@@ -3,12 +3,13 @@
 
 #include <proto/exec.h>
 #include <proto/graphics.h>
+#include <exec/execbase.h>
+#include <graphics/gfxbase.h>
+#include <hardware/blit.h>
 #include <hardware/cia.h>
 #include <hardware/custom.h>
-#include <hardware/blit.h>
 #include <hardware/dmabits.h>
 #include <hardware/intbits.h>
-#include <graphics/gfxbase.h>
 
 #define CMOVE(addr, data) offsetof(struct Custom, addr), data
 #define CMOVE32(addr, data) offsetof(struct Custom, addr), data >> 16, offsetof(struct Custom, addr) + 2, data & 0xffff
@@ -30,7 +31,7 @@ struct Vector3
 } points[8];
 
 struct ExecBase *SysBase;
-struct Custom *custom = (struct Custom *)0xdff000;
+struct Custom *custom;
 struct CIA *ciaa = (struct CIA *)0xbfe001;
 
 // clang-format off
@@ -81,14 +82,14 @@ __attribute__((section(".MEMF_CHIP"))) static UWORD copperlist[] = {
 
 	CEND};
 
-static inline void WaitRaster(const UWORD raster)
+static void WaitRaster(const UWORD raster)
 {
 	while (raster != ((custom->vpos32 >> 8) & 0x01ff))
 	{
 	}
 }
 
-static inline void WaitNotRaster(const UWORD raster)
+static void WaitNotRaster(const UWORD raster)
 {
 	while (raster == ((custom->vpos32 >> 8) & 0x01ff))
 	{
@@ -109,7 +110,7 @@ static void GenerateYTable()
 	}
 }
 
-static inline void GetSinCos(const WORD angle, WORD *sinValue, WORD *cosValue)
+static void GetSinCos(const WORD angle, WORD *sinValue, WORD *cosValue)
 {
 	// Calculate sinValue and cosValue for the angle: cos(angle) = sin(90 - angle)
 	switch (angle)
@@ -133,7 +134,7 @@ static inline void GetSinCos(const WORD angle, WORD *sinValue, WORD *cosValue)
 	}
 }
 
-__attribute__((always_inline)) static inline WORD ScaleFP(LONG value)
+static WORD ScaleFP(LONG value)
 {
 	return ((value << 2) >> 16) & 0xffff;
 }
@@ -171,7 +172,7 @@ static void RotateZ(struct Vector3 *point, const WORD sinValue, const WORD cosVa
 	point->y = newY;
 }
 
-static inline void WaitBlitInline()
+static void WaitBlitInline()
 {
 	UWORD dummyRead = custom->dmaconr;
 	while (custom->dmaconr & DMAF_BLTDONE)
@@ -179,38 +180,27 @@ static inline void WaitBlitInline()
 	}
 }
 
-static inline void BlitClear(const APTR dest, const WORD height, const WORD width)
+static void BlitClear(const APTR dest, const WORD height, const WORD width)
 {
 	WaitBlitInline();
 
-	__asm volatile(
-		"move.l    %1, %5\n" // bltcon0 = DEST; bltcon1 = 0
-		"move.l    %2, %6\n" // bltdpt  = dest
-		"move.w    %3, %7\n" // bltdmod = WIDTH / 8 - width * 2
-		"move.w    %4, %8"	 // bltsize = (height << 6) + width
-		:
-		: "a"(custom), "g"(DEST << 16), "g"(dest), "g"(WIDTH / 8 - width * 2), "g"((height << 6) + width),
-		  "U"(custom->bltcon0), "U"(custom->bltdpt), "U"(custom->bltdmod), "U"(custom->bltsize)
-		: "cc");
+	*(ULONG *)&custom->bltcon0 = DEST << 16; // bltcon0 = DEST; bltcon1 = 0
+	custom->bltdpt = dest;
+	custom->bltdmod = WIDTH / 8 - width * 2;
+	custom->bltsize = (height << 6) + width;
 }
 
-__attribute__((always_inline)) static inline void SetPixel(const UBYTE *screen, const WORD x, const WORD y)
+static void SetPixel(UBYTE *screen, const WORD x, const WORD y)
 {
-	__asm volatile(
-		"bset %0, %1\n"
-		:
-		: "d"((BYTE)~x), "m"(*(screen + yOffset[y] + (x / 8)))
-		: "cc");
+	__asm("bset %1, %0\n" : "=m"(*(screen + yOffset[y] + (x / 8))) : "d"((BYTE)~x) : "cc");
 }
 
-__attribute__((always_inline)) static inline void Swap(WORD *a, WORD *b)
+static void Swap(WORD *a, WORD *b)
 {
-	__asm volatile(
-		"exg %0, %1"
-		: "+r"(*a), "+r"(*b));
+	__asm("exg %0, %1": "+r"(*a), "+r"(*b));
 }
 
-static inline WORD Abs(const WORD x)
+static WORD Abs(const WORD x)
 {
 	return x < 0 ? -x : x;
 }
@@ -296,12 +286,12 @@ static void DrawLine(const APTR screen, struct Vector3 *p0, struct Vector3 *p1)
 static void RotatePoints(const WORD angle)
 {
 	const WORD scaleFactor = 8;
-	const WORD perspectiveFactor = 1 << scaleFactor;
+	const WORD perspectiveFactor = 0b101 << (scaleFactor - 2);
 
 	WORD sin, cos;
 	GetSinCos(angle, &sin, &cos);
 
-	for (UWORD i = 0; i < sizeof(cubePoints) / sizeof(cubePoints[0]); i++)
+	for (UWORD i = 0; i < 8; i++)
 	{
 		struct Vector3 point = cubePoints[i];
 		RotateY(&point, sin, cos);
@@ -327,9 +317,11 @@ void DrawCube(UBYTE *currentScreen)
 LONG main()
 {
 	SysBase = *(struct ExecBase **)4L;
+	custom = (struct Custom *)0xdff000;
 
 	// open gfx lib and save original copperlist
-	struct GfxBase *GfxBase = (struct GfxBase *)OpenLibrary("graphics.library", 0);
+	// struct GfxBase *GfxBase = (struct GfxBase *)OpenLibrary("graphics.library", 0);
+	struct GfxBase *GfxBase = SysBase->IntVects[6].iv_Data;	// get GfxBase pointer from IntVect 6 (IVBLIT)
 	struct copinit *oldCopinit = GfxBase->copinit;
 
 	// save original view and set a default one
@@ -350,9 +342,6 @@ LONG main()
 	SetBPLPtr(screen2);
 	GenerateYTable();
 
-	// initiate our copper
-	custom->cop1lc = (ULONG)copperlist;
-
 	// prepare playfield
 	custom->fmode = 0;
 	custom->bplcon0 = 0x1200;
@@ -363,8 +352,15 @@ LONG main()
 	custom->ddfstrt = 0x38;
 	custom->ddfstop = 0xd0;
 
+	// initiate our copper
+	custom->cop1lc = (ULONG)copperlist;
+
 	// enable DMA
 	custom->dmacon = DMAF_SETCLR | DMAF_COPPER | DMAF_RASTER | DMAF_BLITTER;
+
+	const WORD offset = (CENTRE_Y - 58) * (WIDTH / 8) + (CENTRE_X - 58) / 8;
+	const WORD blitHeight = 116;
+	const WORD blitWidth = 8;
 
 	WORD angle = 0;
 	UBYTE *currentScreen = screen1;
@@ -376,9 +372,6 @@ LONG main()
 		WaitBlitInline();
 		DrawCube(currentScreen);
 
-		WORD offset = (CENTRE_Y - 58) * (WIDTH / 8) + (CENTRE_X - 58) / 8;
-		WORD blitHeight = 116;
-		WORD blitWidth = 8;
 		if (currentScreen == &screen1[0])
 		{
 			BlitClear(screen2 + offset, blitHeight, blitWidth);
@@ -390,7 +383,7 @@ LONG main()
 			currentScreen = screen1;
 		}
 
-		WaitRaster(0x2c);
+		WaitRaster(0x1c);
 		SetBPLPtr(currentScreen);
 
 		angle++;
